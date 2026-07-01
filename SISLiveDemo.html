@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Student Information System - Live Demo</title>
+    <style>
+        body { background-color: #1A120F; color: #D8B788; font-family: 'Courier New', monospace; padding: 40px; }
+        .container { max-width: 800px; margin: auto; border: 1px solid #8B6542; padding: 30px; border-radius: 15px; background: #0A0705; }
+        .menu-btn { display: block; width: 100%; margin: 10px 0; padding: 15px; background: #241814; border: 1px solid #8B6542; color: #D8B788; cursor: pointer; text-align: left; font-size: 16px; transition: 0.3s; }
+        .menu-btn:hover { background: #7D2D29; color: #F4E2C5; }
+        input { display: block; width: 95%; margin: 15px 0; padding: 12px; background: #1A120F; border: 1px solid #8B6542; color: white; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #8B6542; padding: 10px; text-align: left; }
+        h2 { border-bottom: 2px solid #7D2D29; padding-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="app">
+    <h2>STUDENT INFORMATION SYSTEM - MAIN MENU</h2>
+    <button class="menu-btn" onclick="showView('ADD')">1. ADD NEW RECORD</button>
+    <button class="menu-btn" onclick="showView('VIEW')">2. DISPLAY ALL RECORDS</button>
+    <button class="menu-btn" onclick="showView('DELETE')">3. DELETE EXISTING RECORD</button>
+</div>
+
+<script>
+    let records = JSON.parse(localStorage.getItem('sis_records')) || [];
+
+    function showView(view) {
+        const app = document.getElementById('app');
+        if (view === 'ADD') {
+            app.innerHTML = `<h2>ADD NEW RECORD</h2>
+                <input id="stu_num" placeholder="Student Number">
+                <input id="name" placeholder="Name">
+                <input id="course" placeholder="Course">
+                <input id="year" placeholder="Year">
+                <input id="sec" placeholder="Section">
+                <input id="gwa" placeholder="GWA">
+                <button class="menu-btn" onclick="addRecord()">SAVE</button>
+                <button class="menu-btn" onclick="location.reload()">BACK</button>`;
+        } else if (view === 'VIEW') {
+            let table = `<h2>ALL RECORDS</h2><table><tr><th>ID</th><th>Name</th><th>Course</th><th>Year</th><th>Sec</th><th>GWA</th></tr>`;
+            records.forEach(r => table += `<tr><td>${r.stu_num}</td><td>${r.name}</td><td>${r.course}</td><td>${r.year}</td><td>${r.sec}</td><td>${r.gwa}</td></tr>`);
+            app.innerHTML = table + `</table><button class="menu-btn" onclick="location.reload()">BACK</button>`;
+        } else if (view === 'DELETE') {
+            app.innerHTML = `<h2>DELETE RECORD</h2>
+                <input id="delId" placeholder="Enter Student Number to delete">
+                <button class="menu-btn" onclick="deleteRecord()">CONFIRM DELETE</button>
+                <button class="menu-btn" onclick="location.reload()">BACK</button>`;
+        }
+    }
+
+    function addRecord() {
+        records.push({
+            stu_num: document.getElementById('stu_num').value,
+            name: document.getElementById('name').value,
+            course: document.getElementById('course').value,
+            year: document.getElementById('year').value,
+            sec: document.getElementById('sec').value,
+            gwa: document.getElementById('gwa').value
+        });
+        localStorage.setItem('sis_records', JSON.stringify(records));
+        alert("Record Saved Successfully!");
+        location.reload();
+    }
+
+    function deleteRecord() {
+        let id = document.getElementById('delId').value;
+        records = records.filter(r => r.stu_num !== id);
+        localStorage.setItem('sis_records', JSON.stringify(records));
+        alert("Record Deleted!");
+        location.reload();
+    }
+</script>

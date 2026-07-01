@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Parking Simulation</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #111827;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      width: min(100%, 1240px);
+      padding: 20px;
+    }
+
+    #smart-parking-canvas {
+      width: 100%;
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .controls button {
+      min-height: 42px;
+      border: 0;
+      border-radius: 8px;
+      padding: 0 14px;
+      background: #f8fafc;
+      color: #111827;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.25);
+    }
+
+    .controls button:hover {
+      background: #dbeafe;
+    }
+
+    .controls button:active {
+      transform: translateY(1px);
+    }
+
+    canvas {
+      display: block;
+      max-width: 100%;
+      height: auto !important;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="controls" aria-label="Smart parking controls">
+      <button type="button" data-action="add-car">Add Car</button>
+      <button type="button" data-action="troll-car">Troll Car</button>
+      <button type="button" data-action="ghost-car">Passing Car</button>
+      <button type="button" data-action="day-mode">Day Mode</button>
+      <button type="button" data-action="night-mode">Night Mode</button>
+      <button type="button" data-action="real-time">Real Time</button>
+    </div>
+    <div id="smart-parking-canvas"></div>
+  </main>
+
+  <script>
+    let entranceDetected = false;
+    let previousEntrance = false;
+    let slotOccupied = [false, false, false];
+
+    let showAssignment = false;
+    let leaveTimer = 0;
+    let assignedSlot = -1;
+
+    const slotX = [430, 610, 790];
+    const slotY = [100, 100, 100];
+    const lampX = [405, 580, 760, 930, 250, 600, 950];
+    const lampY = [90, 90, 90, 90, 480, 480, 480];
+
+    let bgLayer;
+
+    let isNight = false;
+    let lastHour = -1;
+    let manualTimeOverride = false;
+
+    let trollReserveUntil = [0, 0, 0];
+
+    const MODE_NORMAL = 0;
+    const MODE_TROLL = 1;
+    const MODE_GHOST = 2;
+    let currentMode = MODE_NORMAL;
+
+    const COLLISION_CRASH = 0;
+    const COLLISION_BRAKE = 1;
+    let collisionMode = COLLISION_BRAKE;
+
+    let particles = [];
+    let cars = [];
+
+    class Particle {
+      constructor(p5, x, y, crash) {
+        this.p5 = p5;
+        this.x = x + p5.random(-5, 5);
+        this.y = y + p5.random(-5, 5);
+        this.vx = p5.random(-0.5, 0.5);
+        this.vy = p5.random(-0.5, 0.5);
+        this.maxLife = p5.random(20, 50);
+        this.life = this.maxLife;
+        this.size = p5.random(8, 15);
+        this.isCrashSmoke = crash;
+      }
+
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= 1;
+        this.size += 0.4;
+      }
+
+      display() {
+        this.p5.noStroke();
+        if (this.isCrashSmoke) {
+          this.p5.fill(isNight ? 30 : 50, this.p5.map(this.life, 0, this.maxLife, 0, 200));
+        } else {
+          this.p5.fill(isNight ? 100 : 150, this.p5.map(this.life, 0, this.maxLife, 0, 120));
+        }
+        this.p5.ellipse(this.x, this.y, this.size, this.size);
+      }
+    }
+
+    class Car {
+      constructor(p5, s, troll = false) {
+        this.p5 = p5;
+        this.slot = s;
+        this.x = -120;
+        this.y = 382;
+        this.angle = 0;
+        this.currentAngle = 0;
+        this.state = 1;
+        this.active = true;
+
+        this.carType = p5.int(p5.random(5));
+        this.crashTimer = 0;
+        this.parkedSince = 0;
+
+        this.speedVal = 0;
+        this.maxSpeed = 2.4;
+        this.accel = 0.08;
+        this.brake = 0.4;
+
+        this.isTroll = troll;
+        this.isRogue = false;
+        this.trollStart = 0;
+
+        if (this.isTroll) this.trollStart = p5.millis();
+      }
+    }
+
+    const isEntranceClear = () => {
+      for (let c of cars) {
+        if (c.state === 1 || c.state === 2) return false;
+      }
+      return true;
+    };
+
+    const isEntranceLaneClear = () => {
+      for (let c of cars) {
+        if (Math.abs(c.y - 382) < 40 && c.x < 160) return false;
+      }
+      return true;
+    };
+
+    const isSlotLogicallyClaimed = (p5, slotIndex) => {
+      if (p5.millis() < trollReserveUntil[slotIndex]) return true;
+      for (let c of cars) {
+        if (c.slot === slotIndex && c.state >= 1 && c.state <= 6 && c.state !== 99) return true;
+      }
+      return false;
+    };
+
+    const isSlotVisuallyClaimed = (p5, slotIndex) => {
+      if (p5.millis() < trollReserveUntil[slotIndex]) return true;
+      for (let c of cars) {
+        if (c.slot === slotIndex && c.state >= 2 && c.state <= 6 && c.state !== 99) return true;
+      }
+      return false;
+    };
+
+    const findFreeSlot = (p5) => {
+      for (let i = 0; i < 3; i++) {
+        if (!slotOccupied[i] && !isSlotLogicallyClaimed(p5, i)) return i;
+      }
+      return -1;
+    };
+
+    const radarBlocked = (c) => {
+      if (collisionMode !== COLLISION_BRAKE) return false;
+      for (let other of cars) {
+        if (other === c || other.state === 99 || other.state === 5) continue;
+        if (c.state === 1 || c.state === 2 || c.state === 3 || c.state === 7 || c.state === 8) {
+          if (other.x > c.x && (other.x - c.x) < 155 && Math.abs(other.y - c.y) < 50) return true;
+          if ((other.state === 4 || other.state === 6) && other.x > c.x && (other.x - c.x) < 160) return true;
+        }
+      }
+      return false;
+    };
+
+    function setup() {
+      const canvas = createCanvas(1200, 600);
+      canvas.parent("smart-parking-canvas");
+      bgLayer = createGraphics(1200, 600);
+      console.log("Web Simulation Ready. Use A, S, D, M, N to interact.");
+    }
+
+    function draw() {
+      if (!manualTimeOverride) {
+        let currentRealHour = hour();
+        if (currentRealHour !== lastHour) {
+          lastHour = currentRealHour;
+          isNight = currentRealHour >= 18 || currentRealHour < 6;
+          drawStaticBackground();
+        }
+      }
+
+      image(bgLayer, 0, 0);
+
+      drawParkingSlots();
+      drawSensors();
+      drawEntranceWall();
+      drawExitWall();
+      drawEntrance();
+      drawExit();
+      drawLegend();
+
+      updateCars();
+      updateAndDrawParticles();
+      drawCars();
+
+      if (isNight) drawVolumetricLights();
+      drawOLED();
+    }
+
+    const updateCars = () => {
+      let crashSet = [];
+
+      if (collisionMode === COLLISION_CRASH) {
+        for (let i = 0; i < cars.length; i++) {
+          let c1 = cars[i];
+          for (let j = i + 1; j < cars.length; j++) {
+            let c2 = cars[j];
+            if (c1.state !== 99 && c2.state !== 99) {
+              if (dist(c1.x, c1.y, c2.x, c2.y) < 70) {
+                crashSet.push(c1);
+                crashSet.push(c2);
+              }
+            }
+          }
+        }
+      }
+
+      if (collisionMode === COLLISION_CRASH && crashSet.length > 0) {
+        for (let c of cars) {
+          for (let hit of crashSet) {
+            if (c.state !== 99 && dist(c.x, c.y, hit.x, hit.y) < 90) {
+              c.state = 99;
+              c.crashTimer = millis();
+            }
+          }
+        }
+      }
+
+      for (let c of cars) {
+        if (c.state === 99) {
+          c.currentAngle += 15;
+          particles.push(new Particle(window, c.x, c.y, true));
+          if (millis() - c.crashTimer > 3000) c.active = false;
+          continue;
+        }
+
+        let targetX = 0;
+        let targetY = 0;
+
+        if (c.slot !== -1) {
+          targetX = slotX[c.slot] + 60;
+          targetY = slotY[c.slot] + 120;
+        }
+
+        c.currentAngle = lerp(c.currentAngle, c.angle, 0.08);
+
+        if (c.state === 1 || c.state === 3 || c.state === 4 || c.state === 6 || c.state === 8) {
+          let smokeRate = c.state === 4 && Math.abs(c.currentAngle - -90) > 15 ? 1 : 4;
+          if (frameCount % smokeRate === 0 && c.speedVal > 0.5) {
+            let smokeX = c.x - cos(radians(c.currentAngle)) * 35;
+            let smokeY = c.y - sin(radians(c.currentAngle)) * 35;
+            particles.push(new Particle(window, smokeX, smokeY, false));
+          }
+        }
+
+        let targetSpeed = radarBlocked(c) ? 0 : c.maxSpeed;
+
+        if (c.speedVal < targetSpeed) c.speedVal = Math.min(targetSpeed, c.speedVal + c.accel);
+        else if (c.speedVal > targetSpeed) c.speedVal = Math.max(targetSpeed, c.speedVal - c.brake);
+
+        let ms = c.speedVal;
+
+        if (c.state === 1) {
+          c.x += ms;
+          if (c.x >= 40) {
+            c.state = 2;
+            assignedSlot = c.slot;
+            showAssignment = true;
+          }
+        } else if (c.state === 2) {
+          if (c.isTroll) {
+            if (millis() - c.trollStart >= 6000) {
+              if (c.slot !== -1) trollReserveUntil[c.slot] = millis() + 10000;
+              leaveTimer = millis();
+              c.state = 8;
+            }
+          } else {
+            if (!entranceDetected) {
+              if (millis() - leaveTimer > 2000) {
+                leaveTimer = millis();
+                if (c.slot === -1 && c.isRogue) {
+                  c.slot = findFreeSlot(window);
+                  if (c.slot !== -1) c.isRogue = false;
+                }
+                c.state = c.slot === -1 ? 8 : 3;
+              }
+            }
+          }
+        } else if (c.state === 3) {
+          c.x += ms;
+          if (c.x >= targetX - 50) c.angle = -120;
+          if (c.x >= targetX) {
+            c.x = targetX;
+            c.state = 4;
+          }
+        } else if (c.state === 4) {
+          c.angle = c.y > targetY + 50 ? -120 : -90;
+          c.y -= ms;
+          if (c.y <= targetY) {
+            c.y = targetY;
+            c.angle = -90;
+            c.currentAngle = -90;
+            c.state = 5;
+            c.parkedSince = millis();
+          }
+        } else if (c.state === 5) {
+          if (millis() - c.parkedSince >= 10000) c.state = 6;
+        } else if (c.state === 6) {
+          c.angle = -90;
+          c.y += ms;
+          if (c.y >= 382) {
+            c.y = 382;
+            c.state = 7;
+          }
+        } else if (c.state === 7) {
+          c.angle = 0;
+          c.state = 8;
+        } else if (c.state === 8) {
+          if (c.slot === -1 && c.isRogue) {
+            for (let i = 0; i < 3; i++) {
+              if (!slotOccupied[i] && !isSlotLogicallyClaimed(window, i)) {
+                let slotEntranceX = slotX[i] + 60;
+                if (c.x < slotEntranceX - 50) {
+                  c.slot = i;
+                  c.state = 3;
+                  c.isRogue = false;
+                  break;
+                }
+              }
+            }
+          }
+          c.x += ms;
+          if (c.x > width + 100) c.active = false;
+        }
+      }
+      cars = cars.filter((c) => c.active);
+    };
+
+    const drawCars = () => {
+      for (let c of cars) {
+        push();
+        translate(c.x, c.y);
+        rotate(radians(c.currentAngle));
+
+        let lightsOn = c.state !== 5;
+
+        if (isNight) {
+          if (c.state === 99) {
+            if (frameCount % 10 < 5) {
+              noStroke();
+              fill(255, 255, 100, 60);
+              triangle(15, 0, 140, -60, 140, 60);
+            }
+          } else if (lightsOn) {
+            noStroke();
+            fill(255, 255, 150, 70);
+            triangle(15, 0, 180, -70, 180, 70);
+          }
+        }
+
+        if (lightsOn) {
+          noStroke();
+          if (isNight) {
+            fill(255, 0, 0, c.speedVal < c.maxSpeed - 0.5 ? 255 : 100);
+          } else {
+            fill(255, 0, 0, c.speedVal < c.maxSpeed - 0.5 ? 200 : 40);
+          }
+
+          ellipse(-35, -10, 18, 18);
+          ellipse(-35, 10, 18, 18);
+
+          if (c.speedVal < c.maxSpeed - 0.5) {
+            fill(255, 200, 200);
+            ellipse(-35, -10, 8, 8);
+            ellipse(-35, 10, 8, 8);
+          }
+        }
+
+        drawCarModel(c.carType);
+        pop();
+      }
+    };
+
+    const drawCarModel = (id) => {
+      noStroke();
+      switch (id) {
+        case 0:
+          fill(200, 0, 0); rect(25, -15, 10, 30, 2); rect(-35, -12, 8, 24, 2);
+          fill(150, 0, 0); rect(-15, -12, 25, 24, 4); fill(200, 0, 0); rect(-30, -6, 60, 12, 4);
+          fill(30); ellipse(0, 0, 12, 8); fill(255); ellipse(-2, 0, 6, 6);
+          fill(30); rect(18, -22, 12, 8, 2); rect(18, 14, 12, 8, 2); rect(-25, -24, 14, 10, 2); rect(-25, 14, 14, 10, 2); break;
+        case 1:
+          fill(255, 100, 0); rect(-35, -16, 70, 32, 12); fill(30); rect(-10, -12, 25, 24, 6);
+          fill(255, 100, 0); rect(-5, -10, 12, 20, 2); fill(255, 255, 200); ellipse(30, -10, 6, 8); ellipse(30, 10, 6, 8);
+          fill(255, 0, 0); rect(-34, -12, 4, 6, 2); rect(-34, 6, 4, 6, 2); fill(200, 80, 0); rect(-36, -15, 6, 30, 2); break;
+        case 2:
+          fill(15, 60, 160); rect(-35, -15, 70, 30, 12); fill(180, 160, 120); rect(-12, -11, 22, 22, 4);
+          fill(15, 60, 160); rect(-5, -13, 12, 26, 4); fill(30); rect(10, -11, 6, 22, 2); rect(-20, -11, 6, 22, 2); break;
+        case 3:
+          fill(200, 20, 20); rect(-40, -16, 80, 32, 3); fill(30); rect(-15, -12, 30, 24, 2); fill(200, 20, 20); rect(-5, -10, 15, 20, 1);
+          fill(20); rect(-35, -10, 15, 6); rect(-35, 4, 15, 6); fill(255, 180, 0); triangle(15, -12, 35, -14, 15, -5); triangle(15, 12, 35, 14, 15, 5); triangle(15, -3, 38, 0, 15, 3); break;
+        case 4:
+          fill(100); rect(-35, -10, 70, 20, 2); fill(30); rect(-25, -20, 14, 12, 2); rect(-25, 8, 14, 12, 2); fill(210, 180, 60); rect(-12, -8, 22, 16, 2);
+          stroke(230, 130, 0); strokeWeight(7); noFill(); ellipse(0, 0, 36, 24); line(-18, 0, -38, 0); line(18, 0, 30, 0); noStroke();
+          fill(230, 130, 0); ellipse(34, 0, 16, 12); fill(0); ellipse(36, -4, 3, 3); ellipse(36, 4, 3, 3); fill(210, 180, 60); ellipse(32, 0, 6, 4); break;
+      }
+    };
+
+    const updateAndDrawParticles = () => {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        p.update();
+        p.display();
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+    };
+
+    const drawVolumetricLights = () => {
+      noStroke();
+      for (let i = 0; i < lampX.length; i++) {
+        for (let r = 160; r > 0; r -= 20) {
+          fill(255, 230, 120, 6);
+          ellipse(lampX[i], lampY[i], r, r);
+        }
+        fill(255, 255, 220, 200);
+        ellipse(lampX[i], lampY[i] - 60, 14, 8);
+      }
+    };
+
+    const drawParkingSlots = () => {
+      noStroke();
+      for (let i = 0; i < 3; i++) {
+        if (isNight) fill(50, 55, 65);
+        else fill(120);
+
+        rect(slotX[i], slotY[i], 120, 200);
+
+        if (slotOccupied[i]) fill(255, 0, 0);
+        else if (isSlotVisuallyClaimed(window, i)) fill(255, 200, 0);
+        else fill(0, 200, 0);
+
+        ellipse(slotX[i] + 70, slotY[i] - 20, 18, 18);
+
+        fill(isNight ? 200 : 255);
+        textSize(25);
+        text("S" + (i + 1), slotX[i] + 47, slotY[i] + 50);
+      }
+    };
+
+    const drawSensors = () => {
+      fill(isNight ? 10 : 0);
+      for (let i = 0; i < 3; i++) {
+        ellipse(slotX[i] + 50, slotY[i] - 20, 18, 18);
+      }
+      ellipse(40, 300, 18, 18);
+    };
+
+    const drawEntranceWall = () => {
+      fill(isNight ? color(60, 65, 75) : color(211, 211, 211));
+      rect(0, 0, 380, 300);
+    };
+
+    const drawExitWall = () => {
+      fill(isNight ? color(60, 65, 75) : color(211, 211, 211));
+      rect(950, 0, 380, 300);
+    };
+
+    const drawEntrance = () => {
+      fill(isNight ? color(0, 100, 0) : color(0, 128, 0));
+      rect(5, 351, 70, 60);
+      fill(isNight ? 200 : 255);
+      textSize(16);
+      text("ENTRANCE", 3, 430);
+    };
+
+    const drawExit = () => {
+      fill(isNight ? color(180, 0, 0) : color(255, 0, 0));
+      rect(1125, 351, 70, 60);
+      fill(isNight ? 200 : 255);
+      textSize(16);
+      text("EXIT", 1147, 430);
+    };
+
+    const drawLegend = () => {
+      if (isNight) fill(30, 35, 45, 230);
+      else fill(240);
+      rect(980, 20, 200, 190, 8);
+
+      fill(isNight ? 220 : 0);
+      textSize(14);
+      textAlign(LEFT, TOP);
+      text("LEGEND", 1050, 30);
+
+      fill(10); ellipse(1000, 70, 14, 14);
+      fill(isNight ? 220 : 0); text("IR Sensor", 1015, 64);
+
+      fill(0, 200, 0); ellipse(1000, 100, 14, 14);
+      fill(isNight ? 220 : 0); text("Slot Free", 1015, 94);
+
+      fill(220, 180, 0); ellipse(1000, 130, 14, 14);
+      fill(isNight ? 220 : 0); text("Reserved / Incoming", 1015, 124);
+
+      fill(200, 0, 0); ellipse(1000, 160, 14, 14);
+      fill(isNight ? 220 : 0); text("Slot Occupied", 1015, 154);
+
+      fill(0); rect(992, 185, 16, 10);
+      fill(isNight ? 220 : 0); text("OLED Display", 1015, 184);
+    };
+
+    const drawOLED = () => {
+      fill(0);
+      rect(112, 253, 260, 50, 4);
+      fill(isNight ? color(0, 255, 100) : color(255));
+      textSize(18);
+
+      let free = 0;
+      for (let i = 0; i < 3; i++) {
+        if (!slotOccupied[i] && !isSlotVisuallyClaimed(window, i)) free++;
+      }
+
+      if (showAssignment) {
+        if (assignedSlot === -1) text("Parking Full", 140, 272);
+        else text("Please take Slot " + (assignedSlot + 1), 140, 272);
+        if (isEntranceClear()) {
+          if (millis() - leaveTimer > 2000) showAssignment = false;
+        }
+      } else {
+        text("Available Slots: " + free, 140, 272);
+      }
+    };
+
+    const drawStaticBackground = () => {
+      bgLayer.clear();
+      if (isNight) bgLayer.background(15, 20, 30);
+      else bgLayer.background(70);
+
+      for (let i = 0; i < lampX.length; i++) {
+        bgLayer.noStroke();
+        bgLayer.fill(10);
+        bgLayer.ellipse(lampX[i], lampY[i], 24, 12);
+        bgLayer.fill(isNight ? 30 : 100);
+        bgLayer.rect(lampX[i] - 3, lampY[i] - 60, 6, 60);
+        bgLayer.fill(isNight ? 20 : 80);
+        bgLayer.rect(lampX[i] - 12, lampY[i] - 65, 24, 10, 4);
+      }
+
+      bgLayer.stroke(isNight ? color(120, 120, 0) : color(255, 255, 0));
+      bgLayer.strokeWeight(8);
+      bgLayer.line(405, 0, 405, 500);
+      bgLayer.line(580, 0, 580, 500);
+      bgLayer.line(760, 0, 760, 500);
+      bgLayer.line(930, 0, 930, 500);
+
+      bgLayer.fill(isNight ? color(35, 40, 50) : color(60));
+      bgLayer.noStroke();
+      bgLayer.rect(-20, 300, 1300, 170);
+
+      bgLayer.stroke(isNight ? color(100, 100, 0) : color(255, 255, 0));
+      bgLayer.strokeWeight(8);
+      bgLayer.line(-20, 300, 1300, 300);
+      bgLayer.line(-20, 470, 1300, 470);
+
+      bgLayer.stroke(isNight ? color(150, 150, 150, 150) : color(255));
+      bgLayer.strokeWeight(4);
+      bgLayer.line(60, 382, 1147, 382);
+
+      for (let x = 930; x >= 380; x -= 45) drawBush(bgLayer, x, -20);
+      for (let x = 1200; x >= 10; x -= 45) drawBush(bgLayer, x, 565);
+    };
+
+    const drawBush = (g, x, y) => {
+      for (let i = 0; i < 1200; i++) {
+        let angle = random(TWO_PI);
+        let radius = random(80);
+        let px = x + cos(angle) * radius;
+        let py = y + sin(angle) * radius;
+        let leafSize = random(8, 16);
+
+        g.noStroke();
+        if (isNight) {
+          g.fill(random(10, 20), random(40, 80), random(10, 30));
+        } else {
+          g.fill(random(30, 60), random(150, 200), random(30, 60));
+        }
+        g.ellipse(px, py, leafSize, leafSize);
+      }
+    };
+
+    const runControlAction = (action) => {
+      if (action === "day-mode") {
+        manualTimeOverride = true;
+        isNight = false;
+        drawStaticBackground();
+      }
+      if (action === "night-mode") {
+        manualTimeOverride = true;
+        isNight = true;
+        drawStaticBackground();
+      }
+      if (action === "real-time") {
+        manualTimeOverride = false;
+        lastHour = -1;
+      }
+      if (action === "add-car") {
+        if (isEntranceLaneClear()) {
+          let slot = findFreeSlot(window);
+          if (slot !== -1) {
+            let rogue = new Car(window, slot);
+            rogue.isRogue = true;
+            cars.push(rogue);
+          } else {
+            let passThrough = new Car(window, -1);
+            passThrough.isRogue = true;
+            cars.push(passThrough);
+          }
+        }
+      }
+      if (action === "troll-car") {
+        if (isEntranceClear() && isEntranceLaneClear()) {
+          let slot = findFreeSlot(window);
+          if (slot !== -1) cars.push(new Car(window, slot, true));
+        }
+      }
+      if (action === "ghost-car") {
+        if (isEntranceLaneClear()) {
+          let ghost = new Car(window, -1);
+          ghost.state = 8;
+          cars.push(ghost);
+        }
+      }
+    };
+
+    document.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => runControlAction(button.dataset.action));
+    });
+
+    function keyPressed() {
+      const actionsByKey = {
+        a: "add-car",
+        s: "troll-car",
+        d: "ghost-car",
+        m: "day-mode",
+        n: "night-mode",
+        t: "real-time"
+      };
+      runControlAction(actionsByKey[key.toLowerCase()]);
+    }
+  </script>
+</body>
+</html>

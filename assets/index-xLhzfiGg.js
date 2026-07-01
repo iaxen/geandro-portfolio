@@ -91,32 +91,7 @@ Error generating stack: `+t.message+`
           w-full\r
           max-w-[1920px]\r
           mx-auto\r
-        `,children:t})})}function Ad(){return(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(`img`,{src:`/geandro-portfolio/hero-bg.png`,alt:`Hero Background`,className:`
-          hidden
-          md:block
-          absolute
-          inset-0
-          h-full
-          w-full
-          object-cover
-          object-center
-          select-none
-          pointer-events-none
-        `}),(0,Q.jsx)(`div`,{className:`
-          block
-          md:hidden
-          absolute
-          inset-0
-          pointer-events-none
-        `,style:{background:`
-            repeating-linear-gradient(
-              90deg,
-              #ff0000 0px,
-              #ff0000 40px,
-              #000000 40px,
-              #000000 80px
-            )
-          `}}),(0,Q.jsx)(`div`,{className:`
+        `,children:t})})}function Ad(){return(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(`div`,{className:`hidden md:block absolute inset-0 bg-blue-500`}),(0,Q.jsx)(`div`,{className:`block md:hidden absolute inset-0 bg-red-500`,className:`
           absolute
           inset-0
           bg-black/20

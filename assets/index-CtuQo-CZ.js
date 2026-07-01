@@ -109,8 +109,8 @@ Error generating stack: `+t.message+`
           inset-0
           h-full
           w-full
-          object-cover
-          object-[center_50%]
+          object-contain
+          bg-red-500
           select-none
           pointer-events-none
         `}),(0,Q.jsx)(`div`,{className:`

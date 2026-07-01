@@ -109,7 +109,7 @@ Error generating stack: `+t.message+`
           h-full
           w-full
           object-cover
-          object-[center_20%]
+          object-[center_50%]
           select-none
           pointer-events-none
         `}),(0,Q.jsx)(`div`,{className:`

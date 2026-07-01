@@ -81,7 +81,7 @@ Error generating stack: `+t.message+`
           opacity-20\r
         `,style:{background:`#D9BB8D`}})})}function kd({children:t}){return(0,Q.jsx)(`section`,{className:`\r
         relative\r
-        h-[800px]\r
+        h-[800px] /* Changed from h-screen to a fixed desktop height */\r
         overflow-hidden\r
         bg-[#0b0605]\r
       `,children:(0,Q.jsx)(`div`,{className:`\r
